@@ -445,6 +445,13 @@ route('GET', '/api/verify/decline/:token', async (req, res, params) => {
   sendHtml(res, 200, '<h2>Заявка @' + record.username + ' отклонена</h2>');
 });
 
+route('GET', '/api/admin/verifications', async (req, res) => {
+  const db = ensureCollections(readDb());
+  if (!checkAdmin(db, req)) return send(res, 401, { error: 'unauthorized' });
+  const pending = db.verifications.filter(v => v.status === 'pending').sort((a, b) => b.createdAt - a.createdAt);
+  send(res, 200, pending);
+});
+
 route('POST', '/api/admin/login', async (req, res) => {
   const body = await readBody(req);
   const code = String((body && body.code) || '');
