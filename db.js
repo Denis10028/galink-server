@@ -13,7 +13,9 @@ function ensureDb() {
       users: [],
       items: [],
       chats: [],
-      carts: {}
+      carts: {},
+      verifications: [],
+      adminTokens: {}
     };
     fs.writeFileSync(DB_PATH, JSON.stringify(initial, null, 2));
   }
