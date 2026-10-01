@@ -35,12 +35,12 @@ function isBanned(user) {
   return true;
 }
 
-function clearExpiredBan(db, user) {
+async function clearExpiredBan(db, user) {
   if (user.banned && user.bannedUntil && user.bannedUntil <= Date.now()) {
     user.banned = false;
     user.bannedUntil = 0;
     user.bannedReason = '';
-    writeDb(db);
+    await writeDb(db);
   }
 }
 
@@ -155,7 +155,7 @@ route('POST', '/api/users/register', async (req, res) => {
   const password = String((body && body.password) || '');
   if (!validUsername(username)) return send(res, 400, { error: 'invalid_username' });
   if (!validPassword(password)) return send(res, 400, { error: 'invalid_password' });
-  const db = ensureCollections(readDb());
+  const db = ensureCollections(await readDb());
   if (findUser(db, username)) return send(res, 409, { error: 'taken' });
   const salt = makeToken(16);
   const user = {
@@ -164,7 +164,7 @@ route('POST', '/api/users/register', async (req, res) => {
     banned: false, bannedUntil: 0, bannedReason: '', createdAt: Date.now(), lastSeenAt: Date.now()
   };
   db.users.push(user);
-  writeDb(db);
+  await writeDb(db);
   send(res, 201, { user: publicUser(user) });
 });
 
@@ -172,38 +172,39 @@ route('POST', '/api/users/login', async (req, res) => {
   const body = await readBody(req);
   const username = String((body && body.username) || '').trim();
   const password = String((body && body.password) || '');
-  const db = ensureCollections(readDb());
+  const db = ensureCollections(await readDb());
   const user = findUser(db, username);
   if (!user) return send(res, 404, { error: 'not_found' });
-  clearExpiredBan(db, user);
+  await clearExpiredBan(db, user);
   if (isBanned(user)) return send(res, 403, { error: 'banned', permanent: !user.bannedUntil, until: user.bannedUntil, reason: user.bannedReason || '' });
   if (!user.passwordHash) return send(res, 401, { error: 'password_required' });
   const attempt = hashPassword(password, user.passwordSalt);
   if (attempt !== user.passwordHash) return send(res, 401, { error: 'wrong_password' });
   user.lastSeenAt = Date.now();
-  writeDb(db);
+  await writeDb(db);
   send(res, 200, { user: publicUser(user) });
 });
 
 route('POST', '/api/users/:username/heartbeat', async (req, res, params) => {
-  const db = readDb();
+  const db = await readDb();
   const user = findUser(db, params.username);
   if (!user) return send(res, 404, { error: 'not_found' });
+  await clearExpiredBan(db, user);
   user.lastSeenAt = Date.now();
-  writeDb(db);
-  send(res, 200, { ok: true });
+  await writeDb(db);
+  send(res, 200, { user: publicUser(user) });
 });
 
 route('GET', '/api/users/:username', async (req, res, params) => {
-  const db = ensureCollections(readDb());
+  const db = ensureCollections(await readDb());
   const user = findUser(db, params.username);
   if (!user) return send(res, 404, { error: 'not_found' });
-  clearExpiredBan(db, user);
+  await clearExpiredBan(db, user);
   send(res, 200, { user: publicUser(user) });
 });
 
 route('PATCH', '/api/users/:username', async (req, res, params) => {
-  const db = ensureCollections(readDb());
+  const db = ensureCollections(await readDb());
   const user = findUser(db, params.username);
   if (!user) return send(res, 404, { error: 'not_found' });
   const body = await readBody(req);
@@ -226,12 +227,12 @@ route('PATCH', '/api/users/:username', async (req, res, params) => {
   if (typeof avatar === 'string') user.avatar = avatar;
   if (typeof showOnline === 'boolean') user.showOnline = showOnline;
   if (typeof showAvatar === 'boolean') user.showAvatar = showAvatar;
-  writeDb(db);
+  await writeDb(db);
   send(res, 200, { user: publicUser(user) });
 });
 
 route('GET', '/api/state', async (req, res) => {
-  const db = ensureCollections(readDb());
+  const db = ensureCollections(await readDb());
   send(res, 200, {
     users: db.users.map(publicUser),
     items: db.items,
@@ -241,7 +242,7 @@ route('GET', '/api/state', async (req, res) => {
 });
 
 route('GET', '/api/items', async (req, res) => {
-  const db = readDb();
+  const db = await readDb();
   const items = db.items.slice().sort((a, b) => b.createdAt - a.createdAt);
   send(res, 200, items);
 });
@@ -249,10 +250,10 @@ route('GET', '/api/items', async (req, res) => {
 route('POST', '/api/items', async (req, res) => {
   const body = await readBody(req);
   const { title, price, category, author, desc, photos } = body || {};
-  const db = ensureCollections(readDb());
+  const db = ensureCollections(await readDb());
   const authorUser = findUser(db, author);
   if (!title || !author || !authorUser) return send(res, 400, { error: 'invalid_input' });
-  clearExpiredBan(db, authorUser);
+  await clearExpiredBan(db, authorUser);
   if (isBanned(authorUser)) return send(res, 403, { error: 'banned' });
   const priceNum = Number(price);
   const item = {
@@ -268,12 +269,12 @@ route('POST', '/api/items', async (req, res) => {
     createdAt: Date.now()
   };
   db.items.unshift(item);
-  writeDb(db);
+  await writeDb(db);
   send(res, 201, item);
 });
 
 route('PATCH', '/api/items/:id', async (req, res, params) => {
-  const db = readDb();
+  const db = await readDb();
   const item = db.items.find(i => i.id === params.id);
   if (!item) return send(res, 404, { error: 'not_found' });
   const body = await readBody(req);
@@ -283,12 +284,12 @@ route('PATCH', '/api/items/:id', async (req, res, params) => {
     item.sold = sold;
     item.soldAt = sold ? Date.now() : 0;
   }
-  writeDb(db);
+  await writeDb(db);
   send(res, 200, item);
 });
 
 route('DELETE', '/api/items/:id', async (req, res, params, query) => {
-  const db = readDb();
+  const db = await readDb();
   const item = db.items.find(i => i.id === params.id);
   if (!item) return send(res, 404, { error: 'not_found' });
   if (item.author !== query.get('author')) return send(res, 403, { error: 'forbidden' });
@@ -296,12 +297,12 @@ route('DELETE', '/api/items/:id', async (req, res, params, query) => {
   Object.keys(db.carts).forEach(u => {
     db.carts[u] = (db.carts[u] || []).filter(id => id !== params.id);
   });
-  writeDb(db);
+  await writeDb(db);
   send(res, 200, { ok: true });
 });
 
 route('GET', '/api/chats/dialogs/:username', async (req, res, params) => {
-  const db = readDb();
+  const db = await readDb();
   const user = params.username;
   const last = {};
   const unread = {};
@@ -321,7 +322,7 @@ route('GET', '/api/chats/dialogs/:username', async (req, res, params) => {
 
 route('GET', '/api/chats/:userA/:userB', async (req, res, params, query) => {
   const since = Number(query.get('since') || 0);
-  const db = readDb();
+  const db = await readDb();
   const dialogue = db.chats
     .filter(m =>
       ((m.sender === params.userA && m.receiver === params.userB) ||
@@ -337,7 +338,7 @@ route('POST', '/api/chats/:userA/:userB/read', async (req, res, params) => {
   const reader = body && body.reader;
   if (reader !== params.userA && reader !== params.userB) return send(res, 400, { error: 'invalid_input' });
   const other = reader === params.userA ? params.userB : params.userA;
-  const db = readDb();
+  const db = await readDb();
   let changed = false;
   db.chats.forEach(m => {
     if (m.sender === other && m.receiver === reader && !m.read) {
@@ -345,7 +346,7 @@ route('POST', '/api/chats/:userA/:userB/read', async (req, res, params) => {
       changed = true;
     }
   });
-  if (changed) writeDb(db);
+  if (changed) await writeDb(db);
   send(res, 200, { ok: true });
 });
 
@@ -353,10 +354,10 @@ route('POST', '/api/chats', async (req, res) => {
   const body = await readBody(req);
   const { sender, receiver, text } = body || {};
   if (!sender || !receiver || !String(text || '').trim()) return send(res, 400, { error: 'invalid_input' });
-  const db = ensureCollections(readDb());
+  const db = ensureCollections(await readDb());
   const senderUser = findUser(db, sender);
   if (!senderUser) return send(res, 400, { error: 'invalid_input' });
-  clearExpiredBan(db, senderUser);
+  await clearExpiredBan(db, senderUser);
   if (isBanned(senderUser)) return send(res, 403, { error: 'banned' });
   const msg = {
     id: 'msg_' + Date.now() + '_' + Math.floor(Math.random() * 1000),
@@ -367,22 +368,22 @@ route('POST', '/api/chats', async (req, res) => {
     read: false
   };
   db.chats.push(msg);
-  writeDb(db);
+  await writeDb(db);
   send(res, 201, msg);
 });
 
 route('DELETE', '/api/chats/:userA/:userB', async (req, res, params) => {
-  const db = readDb();
+  const db = await readDb();
   db.chats = db.chats.filter(m =>
     !((m.sender === params.userA && m.receiver === params.userB) ||
       (m.sender === params.userB && m.receiver === params.userA))
   );
-  writeDb(db);
+  await writeDb(db);
   send(res, 200, { ok: true });
 });
 
 route('GET', '/api/cart/:username', async (req, res, params) => {
-  const db = readDb();
+  const db = await readDb();
   send(res, 200, db.carts[params.username] || []);
 });
 
@@ -390,19 +391,19 @@ route('POST', '/api/cart/:username/toggle', async (req, res, params) => {
   const body = await readBody(req);
   const itemId = body && body.itemId;
   if (!itemId) return send(res, 400, { error: 'invalid_input' });
-  const db = readDb();
+  const db = await readDb();
   let list = db.carts[params.username] || [];
   if (list.indexOf(itemId) !== -1) list = list.filter(id => id !== itemId);
   else list = list.concat(itemId);
   db.carts[params.username] = list;
-  writeDb(db);
+  await writeDb(db);
   send(res, 200, list);
 });
 
 route('POST', '/api/verify/apply', async (req, res) => {
   const body = await readBody(req);
   const username = String((body && body.username) || '').trim();
-  const db = ensureCollections(readDb());
+  const db = ensureCollections(await readDb());
   const user = findUser(db, username);
   if (!user) return send(res, 404, { error: 'not_found' });
   if (user.verified) return send(res, 409, { error: 'already_verified' });
@@ -419,34 +420,34 @@ route('POST', '/api/verify/apply', async (req, res) => {
     createdAt: Date.now()
   };
   db.verifications.push(record);
-  writeDb(db);
+  await writeDb(db);
   send(res, 201, { token: record.token });
 });
 
 route('GET', '/api/verify/approve/:token', async (req, res, params) => {
-  const db = ensureCollections(readDb());
+  const db = ensureCollections(await readDb());
   const record = db.verifications.find(v => v.token === params.token);
   if (!record) return sendHtml(res, 404, '<h2>Заявка не найдена</h2>');
   if (record.status !== 'pending') return sendHtml(res, 200, '<h2>Эта заявка уже обработана: ' + record.status + '</h2>');
   const user = findUser(db, record.username);
   if (user) user.verified = true;
   record.status = 'approved';
-  writeDb(db);
+  await writeDb(db);
   sendHtml(res, 200, '<h2>Готово! @' + record.username + ' теперь верифицирован(а) ✅</h2>');
 });
 
 route('GET', '/api/verify/decline/:token', async (req, res, params) => {
-  const db = ensureCollections(readDb());
+  const db = ensureCollections(await readDb());
   const record = db.verifications.find(v => v.token === params.token);
   if (!record) return sendHtml(res, 404, '<h2>Заявка не найдена</h2>');
   if (record.status !== 'pending') return sendHtml(res, 200, '<h2>Эта заявка уже обработана: ' + record.status + '</h2>');
   record.status = 'declined';
-  writeDb(db);
+  await writeDb(db);
   sendHtml(res, 200, '<h2>Заявка @' + record.username + ' отклонена</h2>');
 });
 
 route('GET', '/api/admin/verifications', async (req, res) => {
-  const db = ensureCollections(readDb());
+  const db = ensureCollections(await readDb());
   if (!checkAdmin(db, req)) return send(res, 401, { error: 'unauthorized' });
   const pending = db.verifications.filter(v => v.status === 'pending').sort((a, b) => b.createdAt - a.createdAt);
   send(res, 200, pending);
@@ -456,25 +457,25 @@ route('POST', '/api/admin/login', async (req, res) => {
   const body = await readBody(req);
   const code = String((body && body.code) || '');
   if (code !== ADMIN_CODE) return send(res, 403, { error: 'wrong_code' });
-  const db = ensureCollections(readDb());
+  const db = ensureCollections(await readDb());
   const token = makeToken(24);
   db.adminTokens[token] = Date.now() + ADMIN_TOKEN_TTL;
   Object.keys(db.adminTokens).forEach(t => {
     if (db.adminTokens[t] <= Date.now()) delete db.adminTokens[t];
   });
-  writeDb(db);
+  await writeDb(db);
   send(res, 200, { token });
 });
 
 route('GET', '/api/admin/users', async (req, res) => {
-  const db = ensureCollections(readDb());
+  const db = ensureCollections(await readDb());
   if (!checkAdmin(db, req)) return send(res, 401, { error: 'unauthorized' });
-  db.users.forEach(u => clearExpiredBan(db, u));
+  for (const u of db.users) await clearExpiredBan(db, u);
   send(res, 200, db.users.map(adminUser));
 });
 
 route('POST', '/api/admin/users/:username/ban', async (req, res, params) => {
-  const db = ensureCollections(readDb());
+  const db = ensureCollections(await readDb());
   if (!checkAdmin(db, req)) return send(res, 401, { error: 'unauthorized' });
   const user = findUser(db, params.username);
   if (!user) return send(res, 404, { error: 'not_found' });
@@ -484,24 +485,24 @@ route('POST', '/api/admin/users/:username/ban', async (req, res, params) => {
   user.banned = true;
   user.bannedUntil = permanent ? 0 : Date.now() + Math.max(1, minutes) * 60000;
   user.bannedReason = String((body && body.reason) || '');
-  writeDb(db);
+  await writeDb(db);
   send(res, 200, adminUser(user));
 });
 
 route('POST', '/api/admin/users/:username/unban', async (req, res, params) => {
-  const db = ensureCollections(readDb());
+  const db = ensureCollections(await readDb());
   if (!checkAdmin(db, req)) return send(res, 401, { error: 'unauthorized' });
   const user = findUser(db, params.username);
   if (!user) return send(res, 404, { error: 'not_found' });
   user.banned = false;
   user.bannedUntil = 0;
   user.bannedReason = '';
-  writeDb(db);
+  await writeDb(db);
   send(res, 200, adminUser(user));
 });
 
 route('POST', '/api/admin/users/:username/role', async (req, res, params) => {
-  const db = ensureCollections(readDb());
+  const db = ensureCollections(await readDb());
   if (!checkAdmin(db, req)) return send(res, 401, { error: 'unauthorized' });
   const user = findUser(db, params.username);
   if (!user) return send(res, 404, { error: 'not_found' });
@@ -509,7 +510,7 @@ route('POST', '/api/admin/users/:username/role', async (req, res, params) => {
   const role = String((body && body.role) || '');
   if (ROLES.indexOf(role) === -1) return send(res, 400, { error: 'invalid_role' });
   user.role = role;
-  writeDb(db);
+  await writeDb(db);
   send(res, 200, adminUser(user));
 });
 
