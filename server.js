@@ -83,6 +83,10 @@ function renameEverywhere(db, oldName, newName) {
 function ensureCollections(db) {
   if (!db.verifications) db.verifications = [];
   if (!db.adminTokens) db.adminTokens = {};
+  if (!db.users) db.users = [];
+  if (!db.items) db.items = [];
+  if (!db.chats) db.chats = [];
+  if (!db.carts) db.carts = {};
   return db;
 }
 
@@ -186,7 +190,7 @@ route('POST', '/api/users/login', async (req, res) => {
 });
 
 route('POST', '/api/users/:username/heartbeat', async (req, res, params) => {
-  const db = await readDb();
+  const db = ensureCollections(await readDb());
   const user = findUser(db, params.username);
   if (!user) return send(res, 404, { error: 'not_found' });
   await clearExpiredBan(db, user);
@@ -242,7 +246,7 @@ route('GET', '/api/state', async (req, res) => {
 });
 
 route('GET', '/api/items', async (req, res) => {
-  const db = await readDb();
+  const db = ensureCollections(await readDb());
   const items = db.items.slice().sort((a, b) => b.createdAt - a.createdAt);
   send(res, 200, items);
 });
@@ -274,7 +278,7 @@ route('POST', '/api/items', async (req, res) => {
 });
 
 route('PATCH', '/api/items/:id', async (req, res, params) => {
-  const db = await readDb();
+  const db = ensureCollections(await readDb());
   const item = db.items.find(i => i.id === params.id);
   if (!item) return send(res, 404, { error: 'not_found' });
   const body = await readBody(req);
@@ -289,7 +293,7 @@ route('PATCH', '/api/items/:id', async (req, res, params) => {
 });
 
 route('DELETE', '/api/items/:id', async (req, res, params, query) => {
-  const db = await readDb();
+  const db = ensureCollections(await readDb());
   const item = db.items.find(i => i.id === params.id);
   if (!item) return send(res, 404, { error: 'not_found' });
   if (item.author !== query.get('author')) return send(res, 403, { error: 'forbidden' });
@@ -302,7 +306,7 @@ route('DELETE', '/api/items/:id', async (req, res, params, query) => {
 });
 
 route('GET', '/api/chats/dialogs/:username', async (req, res, params) => {
-  const db = await readDb();
+  const db = ensureCollections(await readDb());
   const user = params.username;
   const last = {};
   const unread = {};
@@ -322,7 +326,7 @@ route('GET', '/api/chats/dialogs/:username', async (req, res, params) => {
 
 route('GET', '/api/chats/:userA/:userB', async (req, res, params, query) => {
   const since = Number(query.get('since') || 0);
-  const db = await readDb();
+  const db = ensureCollections(await readDb());
   const dialogue = db.chats
     .filter(m =>
       ((m.sender === params.userA && m.receiver === params.userB) ||
@@ -338,7 +342,7 @@ route('POST', '/api/chats/:userA/:userB/read', async (req, res, params) => {
   const reader = body && body.reader;
   if (reader !== params.userA && reader !== params.userB) return send(res, 400, { error: 'invalid_input' });
   const other = reader === params.userA ? params.userB : params.userA;
-  const db = await readDb();
+  const db = ensureCollections(await readDb());
   let changed = false;
   db.chats.forEach(m => {
     if (m.sender === other && m.receiver === reader && !m.read) {
@@ -373,7 +377,7 @@ route('POST', '/api/chats', async (req, res) => {
 });
 
 route('DELETE', '/api/chats/:userA/:userB', async (req, res, params) => {
-  const db = await readDb();
+  const db = ensureCollections(await readDb());
   db.chats = db.chats.filter(m =>
     !((m.sender === params.userA && m.receiver === params.userB) ||
       (m.sender === params.userB && m.receiver === params.userA))
@@ -383,7 +387,7 @@ route('DELETE', '/api/chats/:userA/:userB', async (req, res, params) => {
 });
 
 route('GET', '/api/cart/:username', async (req, res, params) => {
-  const db = await readDb();
+  const db = ensureCollections(await readDb());
   send(res, 200, db.carts[params.username] || []);
 });
 
@@ -391,7 +395,7 @@ route('POST', '/api/cart/:username/toggle', async (req, res, params) => {
   const body = await readBody(req);
   const itemId = body && body.itemId;
   if (!itemId) return send(res, 400, { error: 'invalid_input' });
-  const db = await readDb();
+  const db = ensureCollections(await readDb());
   let list = db.carts[params.username] || [];
   if (list.indexOf(itemId) !== -1) list = list.filter(id => id !== itemId);
   else list = list.concat(itemId);
@@ -548,3 +552,11 @@ const PORT = process.env.PORT || 3000;
 server.listen(PORT, '0.0.0.0', () => {
   console.log('GaLink server running on port ' + PORT);
 });
+
+const KEEPALIVE_URL = process.env.RENDER_EXTERNAL_URL || '';
+const KEEPALIVE_MS = Number(process.env.KEEPALIVE_MS) || 14 * 60 * 1000;
+if (KEEPALIVE_URL) {
+  setInterval(() => {
+    fetch(KEEPALIVE_URL.replace(/\/+$/, '') + '/api/health').catch(() => {});
+  }, KEEPALIVE_MS);
+}
